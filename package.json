@@ -1,0 +1,26 @@
+{
+  "name": "coral",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pxmm/coral.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pxmm/coral/issues"
+  },
+  "homepage": "https://github.com/pxmm/coral#readme",
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "ejs": "^3.1.6",
+    "express": "^4.17.1",
+    "pg": "^8.6.0"
+  }
+}
