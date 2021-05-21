@@ -19,6 +19,7 @@ app.listen(port, () => {
 const {dbconfig} = require("./config.js");
 const { Pool } = require("pg");
 const { get, request } = require("http");
+const { response } = require("express");
 
 const pool = new Pool(dbconfig);
 
@@ -317,51 +318,79 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
         */ 
 
     var user = req.params["username"];
+    var taskid = req.params["taskid"];
     var answer = req.params["answer"];
     var deletion_date = req.params["deletion_date"];
     var question_id = req.params["question_id"];
 
-
-    async function initDatum(client, callback) {
-        const insertResponse = "INSERT INTO mobilemarket.datum (datum_owner, datum_type, data, deletion_date, task_id, question_id) VALUES ($1, $2, $3,$4, $5, $6) RETURNING datum_id;"
-        const insertResponseValues = [user, 'response', {"response": answer}, deletion_date, taskid, question_id];
-        await client.query(insertResponse, insertResponseValues, (err, res) => {
+    async function addToDatum(client, callback) {
+        const q = "INSERT INTO mobilemarket.datum (datum_owner, datum_type, data, deletion_date, task_id, question_id) VALUES ($1, $2, $3,$4, $5, $6) RETURNING datum_id;"
+        const v = [user, 'response', {"response": answer}, deletion_date, taskid, question_id];
+        await client.query(q, v, (err, result) => {
             if (err){
-                return callback("Error inserting response into datum table");
+                return callback(err);
             }
-            response_id = res.rows[0]['datum_id'];
-        })
-        const linkSource = "INSERT INTO mobilemarket.datum_source (datum_id, source_id) VALUES ($1, $2);";
-        const linkSouceValues = [response_id, login_id];
-     
-        await client.query(insertResponse, insertResponseValues, (err, res) => {
-            if (err){
-                return callback("Error linking source");
-            }
-        })
-
-        const linkReceiver = "INSERT INTO mobilemarket.datum_receiver (datum_id, receiver_id) VALUES ($1, $2);";
-        const linkReceiverValues = [login_id, response_id];
-        await client.query(insertResponse, insertResponseValues, (err, res) => {
-            if (err){
-                return callback("Error linking response");
-            }
+            return callback(err, result.rows)
         })
     }
+
+    async function getLoginID(client, callback) {
+        const q = "SELECT datum_id FROM mobilemarket.datum WHERE datum_owner='" + user + "' AND datum_type = 'login';"
+        await client.query(q, (err, result) => {
+            if (err){
+                return callback(err);
+            }
+            console.log(result)
+            return callback(err, result.rows);
+        })
+    }
+
+    async function addToDatumSource(client, response_id, login_id, callback) {
+        const q = "INSERT INTO mobilemarket.datum_source (datum_id, source_id) VALUES ($1, $2);"
+        const v = [response_id, login_id]
+        await client.query(q, v, (err, result) => {
+            if (err){
+                return callback(err);
+            }
+            return callback(err, result.rows);
+        })
+    }
+    
     (async () => {
         // Connect to database
         const client = await pool.connect();
-        await retryTxn(0, 15, client, initDatum, (err, result) => {
+        await addToDatum(client, (err, result) => {
             if (err) {
-                console.log("error")
-                console.log(err)
                 res.status(400);
                 res.send(err);
             }
-            else {
-                res.status(200);
-                res.send(result);
-            }
+            console.log(result)
+            response_id = result[0]['datum_id']
+            
+            getLoginID(client, (err, result) => {
+                if (err) {
+                    console.log(err)
+                    res.status(404)
+                    res.send(err)
+                    
+                }
+                console.log(result)
+                login_id = result[0]['datum_id']
+
+                addToDatumSource(client, response_id, login_id, (err, result) => {
+                    if (err) {
+                        console.log(err)
+                        res.status(404)
+                        res.send(err)
+                        
+                    }
+                    else {
+                        console.log("success")
+                        res.status(200)
+                        res.send("Submitted")
+                    }
+                })
+            })
         });
     })().catch((err) => console.log(err.stack));   
 
@@ -390,9 +419,34 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
         VALUES
         (login_id, response_id);
 
+        async function initDatum(client, callback) {
+        const insertResponse = "INSERT INTO mobilemarket.datum (datum_owner, datum_type, data, deletion_date, task_id, question_id) VALUES ($1, $2, $3,$4, $5, $6) RETURNING datum_id;"
+        const insertResponseValues = [user, 'response', {"response": answer}, deletion_date, taskid, question_id];
+        await client.query(insertResponse, insertResponseValues, (err, res) => {
+            if (err){
+                return callback("Error inserting response into datum table");
+            }
+            response_id = res.rows[0]['datum_id'];
+        })
+        const linkSource = "INSERT INTO mobilemarket.datum_source (datum_id, source_id) VALUES ($1, $2);";
+        const linkSouceValues = [response_id, login_id];
+     
+        await client.query(insertResponse, insertResponseValues, (err, res) => {
+            if (err){
+                return callback("Error linking source");
+            }
+        })
+
+        const linkReceiver = "INSERT INTO mobilemarket.datum_receiver (datum_id, receiver_id) VALUES ($1, $2);";
+        const linkReceiverValues = [login_id, response_id];
+        await client.query(insertResponse, insertResponseValues, (err, res) => {
+            if (err){
+                return callback("Error linking response");
+            }
+        })
+    }
+
     */
-    res.status(200);
-    res.send();
 });
 
 
@@ -720,7 +774,7 @@ app.get("/buyer/view/results/:taskid", async(req, res, next) => {
 // ===== Admin Endpoint ============
 
 
-app.post("/admin/approve/task", async(req, res) => {
+app.get("/admin/approve/task", async(req, res) => {
     /*
     To approve tasks initially - this will create question ids for the task given
     e.g format 
