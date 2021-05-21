@@ -18,7 +18,7 @@ app.listen(port, () => {
 // Configure DB connection
 const {dbconfig} = require("./config.js");
 const { Pool } = require("pg");
-const { get } = require("http");
+const { get, request } = require("http");
 
 const pool = new Pool(dbconfig);
 
@@ -129,7 +129,6 @@ app.post("/seller/signup", async(req, res) => {
         await retryTxn(0, 15, client, signupUser, (err, result) => {
             if (err) {
                 console.log("error")
-                console.log(err)
                 res.status(400);
                 res.send(err);
             }
@@ -155,13 +154,7 @@ app.post("/seller/login", async (req, res) => {
                 return callback(err, null)
             }
             else {
-                console.log(res)
-                if (res.rows.length > 0){
-                    return callback(err, res.rows[0].password)
-                }
-                else {
-                    return callback("User DNE", null)
-                }
+                return callback(err, res.rows)
             }
         })
     }
@@ -173,20 +166,25 @@ app.post("/seller/login", async (req, res) => {
         // Transfer funds in transaction retry wrapper
         await retryTxn(0, 15, client, loginUser, (err, result) => {
             if (err) {
-                console.log("error")
-                console.log(err)
-                res.status(400);
-                res.send("Failure");
+                res.status(404);
+                res.send(err)
             }
-            else {
+            // USER exists
+            else if (result.length > 0){
+                hashpass = result[0].password
                 if (result === hash){
                     res.status(200);
                     res.send("Success");
                 }
                 else {
-                    res.status(300)
+                    res.status(403)
                     res.send("Failure");
                 }
+            }
+            //USER DNE
+            else {
+                res.status(403)
+                res.send("Failure");
             }
         });
     })().catch((err) => console.log(err.stack));    
@@ -311,7 +309,13 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
         would be great if we could add datum_id of the user's login info 
         here for contextual integrity – login_id
 
-    */
+          /* 
+            query to get login_id
+            SELECT datum_id FROM mobilemarket.datum
+            WHERE datum_owner = user
+            AND datum_type = 'login';
+        */ 
+
     var user = req.params["username"];
     var answer = req.params["answer"];
     var deletion_date = req.params["deletion_date"];
@@ -487,13 +491,7 @@ app.post("/buyer/login", async (req, res) => {
                 return callback(err, null)
             }
             else {
-                console.log(res)
-                if (res.rows.length > 0){
-                    return callback(err, res.rows[0].password)
-                }
-                else {
-                    return callback("User DNE", null)
-                }
+                return callback(err, res.rows)
             }
         })
     }
@@ -507,16 +505,23 @@ app.post("/buyer/login", async (req, res) => {
             if (err) {
                 console.log("error")
                 console.log(err)
-                res.status(400);
-                res.send("Failure");
+                res.status(404);
+                res.send(err);
             }
             else {
-                if (result === hash){
-                    res.status(200);
-                    res.send("Success");
+                if (result.length > 0){
+                    hashpass = result[0].password
+                    if (hashpass === hash){
+                        res.status(200);
+                        res.send("Success");
+                    }
+                    else {
+                        res.status(403)
+                        res.send("Failure");
+                    }
                 }
                 else {
-                    res.status(300)
+                    res.status(403)
                     res.send("Failure");
                 }
             }
@@ -543,68 +548,83 @@ app.post("/buyer/create/task", async (req, res, next) => {
             "buyer_id": johndoe,
         }   
     */
-
-    var irb_approval = req.body['irb_approval'];
-    var question = req.body['question'];
-    var answer1 = req.body['answer1'];
-    var answer2 = req.body['answer2'];
-    var answer3 = req.body['answer3'];
-    var answer4 = req.body['answer4'];
-    var location = req.body['location'];
-    var num_data_points = req.body['num_data_points'];
-    var deadline = req.body['deadline'];
-    var budget = req.body['budget'];
-    var buyer_id = req.body['buyer_id'];
-
-    async function createTask(client, callback) {
-        const q = "INSERT INTO mobilemarket.task (irb_approval, question, answer_1, answer_2, answer_3, answer_4, location, num_data_points, deadline, budget, status, buyer_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING task_id;"
-        const values = [irb_approval, question, answer1, answer2, answer3, answer4, location, num_data_points, deadline, budget, "IN REVIEW", buyer_id]
-        await client.query(q, values, (err, res) => {
-            if (err){
-                return callback(err);
-            }
-            return callback(err, res.rows[0]);
-        })
+    // check that body is properly formatted
+    body_keys = Object.keys(req.body);
+    required_fields = ['irb_approval', 'question', 'answer1', 'answer2', 'answer3', 'answer4', 'location', 'num_data_points', 'deadline', 'budget', 'buyer_id']
+    missing_fields = []
+    for (var i = 0; i < required_fields.length; i++) {
+        f = required_fields[i]
+        if (!(body_keys.includes(f))){
+            missing_fields.push(f)
+        }
     }
+    if (missing_fields.length > 0){
+        res.status(300)
+        res.send({"missing": missing_fields})
+    }
+    else {    
+        var irb_approval = req.body['irb_approval'];
+        var question = req.body['question'];
+        var answer1 = req.body['answer1'];
+        var answer2 = req.body['answer2'];
+        var answer3 = req.body['answer3'];
+        var answer4 = req.body['answer4'];
+        var location = req.body['location'];
+        var num_data_points = req.body['num_data_points'];
+        var deadline = req.body['deadline'];
+        var budget = req.body['budget'];
+        var buyer_id = req.body['buyer_id'];
 
-    (async () => {
-        // Connect to database
-        const client = await pool.connect();
+        async function createTask(client, callback) {
+            const q = "INSERT INTO mobilemarket.task (irb_approval, question, answer_1, answer_2, answer_3, answer_4, location, num_data_points, deadline, budget, status, buyer_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING task_id;"
+            const values = [irb_approval, question, answer1, answer2, answer3, answer4, location, num_data_points, deadline, budget, "IN REVIEW", buyer_id]
+            await client.query(q, values, (err, res) => {
+                if (err){
+                    return callback(err);
+                }
+                return callback(err, res.rows[0]);
+            })
+        }
 
-        // Transfer funds in transaction retry wrapper
-        console.log("Creating Task...");
-        await retryTxn(0, 15, client, createTask, (err, result) => {
-            if (err) {
-                console.log("error")
-                console.log(err)
-                res.status(400);
-                res.send(err);
-            }
-            else {
-                console.log("success!")
-                console.log(result)
-                res.status(200);
-                res.send(result);
-            }
-        });
-    })().catch((err) => console.log(err.stack));   
+        (async () => {
+            // Connect to database
+            const client = await pool.connect();
 
-    //todo: handling buyer dne
+            // Transfer funds in transaction retry wrapper
+            console.log("Creating Task...");
+            await retryTxn(0, 15, client, createTask, (err, result) => {
+                if (err) {
+                    console.log("error")
+                    console.log(err)
+                    res.status(400);
+                    res.send(err);
+                }
+                else {
+                    console.log("success!")
+                    console.log(result)
+                    res.status(200);
+                    res.send(result);
+                }
+            });
+        })().catch((err) => console.log(err.stack));   
 
+        //todo: handling buyer dne
+        
 
-    /* 
+        /* 
 
-        1. do we want tasks to be auto-approved, which means we automatically
-        insert into the request and question tables as well?
+            1. do we want tasks to be auto-approved, which means we automatically
+            insert into the request and question tables as well?
 
-        2. insert into task table
-        INSERT INTO mobilemarket.task
-        (irb_approval, question, answer_1, answer_2, answer_3, answer_4, 
-        location, num_data_points, deadline, budget, status, buyer_id)
-        VALUES
-        (irb_approval, question, answer1, answer2, answer3, answer4,
-        location, num_data_points, deadline, budget, "IN REVIEW", buyer_id);
-    */
+            2. insert into task table
+            INSERT INTO mobilemarket.task
+            (irb_approval, question, answer_1, answer_2, answer_3, answer_4, 
+            location, num_data_points, deadline, budget, status, buyer_id)
+            VALUES
+            (irb_approval, question, answer1, answer2, answer3, answer4,
+            location, num_data_points, deadline, budget, "IN REVIEW", buyer_id);
+        */
+    }
 });
 
 
@@ -695,3 +715,153 @@ app.get("/buyer/view/results/:taskid", async(req, res, next) => {
 
     */
 });
+
+
+// ===== Admin Endpoint ============
+
+
+app.post("/admin/approve/task", async(req, res) => {
+    /*
+    To approve tasks initially - this will create question ids for the task given
+    e.g format 
+        {
+            "admin_username": "abc123", (maybe we should add this)
+            "taskid": '0810ec0a-f7e2-4195-83e6-447337017b41'
+        }   
+    */
+    var taskid = req.params["taskid"];
+
+    async function formallyAddRequest(client, callback) {
+        console.log("formally add request")
+        const q = "INSERT INTO mobilemarket.request (time_sent, status, task_id) VALUES (CURRENT_TIMESTAMP, 'APPROVED', '"+ taskid + "') RETURNING request_id;"
+        await client.query(q, (err, res) => {
+            if (err){
+                return callback(err);
+            }
+            return callback(err, res.rows)
+        })
+    }
+
+    async function getTaskQuestions(client, callback) {
+        console.log("get task questions")
+        const q = "SELECT question, answer_1, answer_2, answer_3, answer_4 FROM mobilemarket.task WHERE task_id='" + taskid + "';"
+        await client.query(q, (err, res) => {
+            if (err){
+                return callback(err);
+            }
+            if (res.rows.length > 0){
+                return callback(err, res.rows)
+            }
+            else {
+                return callback("DNE: task id does not exist")
+            }   
+        })
+    }
+
+    async function addQuestion(client, request_id, questionres, callback) {
+        console.log("add question")
+        console.log(questionres)
+        question = questionres['question'];
+        answer_1 = questionres['answer_1'];
+        answer_2 = questionres['answer_2'];
+        answer_3 = questionres['asnwer_3'];
+        answer_4 = questionres['answer_4']; 
+
+        const q = "INSERT INTO mobilemarket.question (question, answer_1, answer_2, answer_3, answer_4, question_number, request_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING question_id;";
+        const v = [question, answer_1, answer_2, answer_3, answer_4, 1, request_id]
+        await client.query(q, v, (err, res) => {
+            if (err){
+                return callback(err);
+            }
+            return callback(err, res.rows);
+        })
+    }
+
+    async function updateTaskStatus(client, callback) {
+        console.log("update task status")
+        const q = "UPDATE mobilemarket.task SET status = 'APPROVED' WHERE task_id='"+ taskid + "';"
+        await client.query(q, (err, res) => {
+            if (err){
+                return callback(err);
+            }
+            return callback(err, res.rows)
+        })
+    }
+
+    (async () => {
+        // Connect to database
+        const client = await pool.connect();
+
+        await formallyAddRequest(client, (err, result) => {
+            if (err) {
+                console.log(err)
+                res.status(404)
+                res.send(err)
+                
+            }
+
+            request_id = result[0]['request_id']
+            console.log(request_id)
+
+            getTaskQuestions(client, (err, result) => {
+                if (err) {
+                    console.log(err)
+                    res.status(404)
+                    res.send(err)
+                    
+                }
+                questionres = result[0]
+
+                addQuestion(client, request_id, questionres, (err, result) => {
+                    if (err) {
+                        console.log(err)
+                        res.status(404)
+                        res.send(err)
+                    }
+                    question_id = result[0]['question_id']
+
+                    updateTaskStatus(client, (err, result) => {
+                        if (err) {
+                            console.log(err)
+                            res.status(404)
+                            res.send(err)   
+                        }
+                        res.status(200)
+                        res.send({"request_id": request_id, "question_ids": [question_id]})
+                    })
+                })
+            })
+        })
+    })().catch((err) => console.log(err.stack));  
+});
+
+
+
+
+
+/* 
+    new admin endpoint to insert into request and questions table for an approved task,
+    given ID
+    var taskid = req.params["taskid"];
+    1. select relevant parameters from task table
+    "SELECT question, answer_1, answer_2, answer_3, answer_4 
+    FROM mobilemarket.task
+    WHERE task_id = " + taskid + ";"
+    2. add to request table
+    "INSERT INTO mobilemarket.request
+    (time_sent, status, task_id)
+    VALUES
+    (CURRENT_TIMESTAMP, 'APPROVED', task_id);"
+    // CURRENT_TIMESTAMP is CRDB SQL fn
+    // from this insert query, get the request_id
+    request_id = res.rows[0]['request_id'];
+    3. insert into question table
+    "INSERT INTO mobilemarket.question
+    (question, answer_1, answer_2, answer_3, answer_4, question_number, request_id)
+    VALUES
+    (question, answer_1, answer_2, answer_3, answer_4, 1, request_id);"
+    4. update task status to APPROVED 
+    "UPDATE mobilemarket.task
+    SET status = 'APPROVED'
+    WHERE id = " + taskid + ";"
+*/
