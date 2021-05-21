@@ -319,17 +319,28 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
 
     var user = req.params["username"];
     var taskid = req.params["taskid"];
-    var answer = req.params["answer"];
-    var deletion_date = req.params["deletion_date"];
-    var question_id = req.params["question_id"];
+    var answer = req.body["answer"];
+    var deletion_date = req.body["deletion_date"];
+    var question_id = req.body["question_id"];
 
+    // Verify values submitted
+    // also check the datetimes
+    if (answer > 4 || answer < 1) {
+        res.status(300)
+        res.send("Answer out of bounds")
+        return;
+    }
+    
     async function addToDatum(client, callback) {
-        const q = "INSERT INTO mobilemarket.datum (datum_owner, datum_type, data, deletion_date, task_id, question_id) VALUES ($1, $2, $3,$4, $5, $6) RETURNING datum_id;"
-        const v = [user, 'response', {"response": answer}, deletion_date, taskid, question_id];
+        const q = "INSERT INTO mobilemarket.datum (datum_owner, datum_type, data, deletion_date, task_id, question_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING datum_id;"
+        const data = {"response": answer}
+        const v = [user, 'response', JSON.stringify(data), deletion_date, taskid, question_id];
         await client.query(q, v, (err, result) => {
             if (err){
                 return callback(err);
             }
+            console.log(result)
+            console.log(result.rows)
             return callback(err, result.rows)
         })
     }
@@ -340,7 +351,6 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
             if (err){
                 return callback(err);
             }
-            console.log(result)
             return callback(err, result.rows);
         })
     }
@@ -363,8 +373,8 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
             if (err) {
                 res.status(400);
                 res.send(err);
+                return
             }
-            console.log(result)
             response_id = result[0]['datum_id']
             
             getLoginID(client, (err, result) => {
@@ -372,9 +382,8 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
                     console.log(err)
                     res.status(404)
                     res.send(err)
-                    
+                    return
                 }
-                console.log(result)
                 login_id = result[0]['datum_id']
 
                 addToDatumSource(client, response_id, login_id, (err, result) => {
@@ -382,7 +391,6 @@ app.post("/seller/submit/:username/:taskid", async (req, res, next) => {
                         console.log(err)
                         res.status(404)
                         res.send(err)
-                        
                     }
                     else {
                         console.log("success")
@@ -496,7 +504,6 @@ app.post("/buyer/signup", async(req, res) => {
     var pass = req.body['password'];
     const hash = crypto.createHash('sha256').update(pass).digest('base64');
 
-    console.log(req)
     async function signupUser(client, callback) {
         const createUser = "INSERT INTO mobilemarket.buyer (username, password) VALUES ($1, $2)";
         const values = [user, hash];
@@ -774,7 +781,7 @@ app.get("/buyer/view/results/:taskid", async(req, res, next) => {
 // ===== Admin Endpoint ============
 
 
-app.get("/admin/approve/task", async(req, res) => {
+app.get("/admin/approve/:taskid", async(req, res) => {
     /*
     To approve tasks initially - this will create question ids for the task given
     e.g format 
@@ -818,7 +825,7 @@ app.get("/admin/approve/task", async(req, res) => {
         question = questionres['question'];
         answer_1 = questionres['answer_1'];
         answer_2 = questionres['answer_2'];
-        answer_3 = questionres['asnwer_3'];
+        answer_3 = questionres['answer_3'];
         answer_4 = questionres['answer_4']; 
 
         const q = "INSERT INTO mobilemarket.question (question, answer_1, answer_2, answer_3, answer_4, question_number, request_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING question_id;";
@@ -851,9 +858,9 @@ app.get("/admin/approve/task", async(req, res) => {
                 console.log(err)
                 res.status(404)
                 res.send(err)
-                
+                return
             }
-
+            
             request_id = result[0]['request_id']
             console.log(request_id)
 
@@ -862,7 +869,7 @@ app.get("/admin/approve/task", async(req, res) => {
                     console.log(err)
                     res.status(404)
                     res.send(err)
-                    
+                    return
                 }
                 questionres = result[0]
 
@@ -871,6 +878,7 @@ app.get("/admin/approve/task", async(req, res) => {
                         console.log(err)
                         res.status(404)
                         res.send(err)
+                        return
                     }
                     question_id = result[0]['question_id']
 
@@ -879,6 +887,7 @@ app.get("/admin/approve/task", async(req, res) => {
                             console.log(err)
                             res.status(404)
                             res.send(err)   
+                            return
                         }
                         res.status(200)
                         res.send({"request_id": request_id, "question_ids": [question_id]})
